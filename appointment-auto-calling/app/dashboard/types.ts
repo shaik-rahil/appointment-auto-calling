@@ -27,6 +27,24 @@ export interface Appointment {
   status: AppointmentStatus;
   createdAt: string;
   notes?: string;
+  // Optional Supabase relationship fields used by appointment detail views.
+  patient_name?: string;
+  phone?: string;
+  source?: string;
+  created_at?: string;
+  doctors?: { name?: string; department?: string } | null;
+  doctor_slots?: { slot_start?: string } | null;
+}
+
+export interface CallLog {
+  call_id: string;
+  phone: string;
+  duration_sec: number;
+  summary: string;
+  transcript: string;
+  outcome: 'booked' | 'transferred' | 'info_only' | 'missed' | string;
+  recording_url?: string | null;
+  created_at: string;
 }
 
 export interface PatientRecord {

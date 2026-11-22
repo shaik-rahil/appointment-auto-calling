@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { validateAgentRequest } from '@/lib/agent-auth';
 
 export async function POST(req: Request) {
-  // 1. Verify Secret Token
-  const authHeader = req.headers.get('authorization');
-  const expectedSecret = process.env.AGENT_SECRET;
-
-  if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = validateAgentRequest(req);
+  if (authError) return authError;
 
   try {
     const body = await req.json();
@@ -23,6 +19,12 @@ export async function POST(req: Request) {
 
     // 2. Sanitize Phone Number to 10 digits
     const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length !== 10) {
+      return NextResponse.json(
+        { error: 'invalid_phone', message: 'phone must contain a valid 10-digit mobile number.' },
+        { status: 400 }
+      );
+    }
 
     // 3. Atomically book via SQL stored procedure
     const { data, error } = await supabaseAdmin.rpc('book_by_time', {

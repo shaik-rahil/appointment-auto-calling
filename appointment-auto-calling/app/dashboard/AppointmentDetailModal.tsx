@@ -49,7 +49,7 @@ export default function AppointmentDetailModal({
         month: 'short',
         year: 'numeric'
       })
-    : new Date(appointment.created_at).toLocaleDateString('en-IN', {
+    : new Date(appointment.created_at || appointment.createdAt).toLocaleDateString('en-IN', {
         day: 'numeric',
         month: 'short',
         year: 'numeric'
@@ -101,7 +101,7 @@ export default function AppointmentDetailModal({
               </p>
             </div>
             <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-              {(['confirmed', 'arrived', 'completed', 'cancelled'] as const).map((st) => (
+              {(['Confirmed', 'Scheduled', 'Completed', 'Cancelled'] as const).map((st) => (
                 <button
                   key={st}
                   onClick={() => onStatusChange(appointment.id, st)}

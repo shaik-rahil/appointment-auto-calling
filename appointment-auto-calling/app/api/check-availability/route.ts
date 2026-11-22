@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { validateAgentRequest } from '@/lib/agent-auth';
 
 export async function POST(req: Request) {
-  // 1. Verify Secret Token
-  const authHeader = req.headers.get('authorization');
-  const expectedSecret = process.env.AGENT_SECRET;
-
-  if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = validateAgentRequest(req);
+  if (authError) return authError;
 
   try {
     const body = await req.json();

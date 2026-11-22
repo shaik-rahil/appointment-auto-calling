@@ -32,6 +32,7 @@ import PatientsView from './PatientsView';
 import ReportsView from './ReportsView';
 import SettingsView from './SettingsView';
 import BookingModal from './BookingModal';
+import { supabase } from '@/lib/supabase';
 
 interface Toast {
   id: string;
@@ -65,6 +66,60 @@ export default function DashboardPage() {
     setDoctors(loadedDocs);
     setAppointments(loadedAppts);
     setIsLoaded(true);
+
+    const refreshAppointments = async () => {
+      const { data, error } = await supabase
+        .from('appointments')
+        .select('*, doctors(name, department), doctor_slots(slot_start)')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Could not load Supabase appointments:', error.message);
+        return;
+      }
+
+      const rows = (data || []) as any[];
+      setAppointments(rows.map((row) => {
+        const doctor = Array.isArray(row.doctors) ? row.doctors[0] : row.doctors;
+        const slot = Array.isArray(row.doctor_slots) ? row.doctor_slots[0] : row.doctor_slots;
+        const slotStart = slot?.slot_start ? new Date(slot.slot_start) : null;
+        const date = slotStart
+          ? `${slotStart.getFullYear()}-${String(slotStart.getMonth() + 1).padStart(2, '0')}-${String(slotStart.getDate()).padStart(2, '0')}`
+          : row.date || '';
+        const time = slotStart
+          ? slotStart.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          : row.time || '';
+        const rawStatus = String(row.status || 'Confirmed').toLowerCase();
+        const status = rawStatus.charAt(0).toUpperCase() + rawStatus.slice(1);
+
+        return {
+          id: String(row.id),
+          patientName: row.patient_name || 'Patient',
+          patientPhone: row.phone || '',
+          doctorId: String(row.doctor_id || ''),
+          doctorName: doctor?.name || 'Unassigned doctor',
+          doctorSpecialization: doctor?.department || 'General Medicine',
+          date,
+          time,
+          reason: row.reason || row.notes || '',
+          status: status === 'Cancelled' ? 'Cancelled' : status === 'Completed' ? 'Completed' : status === 'Scheduled' ? 'Scheduled' : 'Confirmed',
+          createdAt: row.created_at || new Date().toISOString(),
+          notes: row.notes || undefined,
+        } as Appointment;
+      }));
+    };
+
+    void refreshAppointments();
+    const channel = supabase
+      .channel('dashboard-appointments')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => {
+        void refreshAppointments();
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
   const showToast = (title: string, message: string, type: Toast['type'] = 'success') => {

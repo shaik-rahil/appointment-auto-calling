@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { validateAgentRequest } from '@/lib/agent-auth';
 
 export async function POST(req: Request) {
+  const authError = validateAgentRequest(req);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
 
