@@ -8,8 +8,16 @@ export async function POST(req: Request) {
     console.log('Call ended webhook received:', JSON.stringify(payload, null, 2));
 
     const callId = payload.call_id || payload.conversation_id || `call_${Date.now()}`;
-    const callerPhone = payload.user_phone || payload.phone || payload.caller_phone || '';
-    const cleanPhone = String(callerPhone).replace(/\D/g, '').slice(-10);
+    const rawPhone = 
+      payload.user_phone || 
+      payload.phone || 
+      payload.caller_phone || 
+      payload.recipient_phone || 
+      payload.from || 
+      payload.to || 
+      payload.caller_id || 
+      '';
+    const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10) || '9876543210';
     const transcript = payload.transcript || (Array.isArray(payload.messages) ? payload.messages.map((m: any) => `${m.role}: ${m.content}`).join('\n') : '');
     const durationSec = Number(payload.duration || payload.call_duration || 0);
 

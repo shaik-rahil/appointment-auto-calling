@@ -17,8 +17,19 @@ export async function POST(req: Request) {
     const { doctor, date, time, patient_name, phone, call_id, age } = body;
 
     const callerName = patient_name || body.name || 'Caller';
-    const callerPhone = phone || body.patient_phone || '9999999999';
-    const cleanPhone = String(callerPhone).replace(/\D/g, '').slice(-10);
+    const rawPhone = 
+      phone || 
+      body.patient_phone || 
+      body.user_phone || 
+      body.caller_phone || 
+      body.phone_number || 
+      body.caller_id || 
+      body.from || 
+      body.to || 
+      req.headers.get('x-caller-phone') ||
+      req.headers.get('x-phone') ||
+      '';
+    const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10) || '9876543210';
     const parsedAge = age ? parseInt(String(age).replace(/\D/g, ''), 10) : null;
 
     // Sanitize Date and Time from spoken voice input
