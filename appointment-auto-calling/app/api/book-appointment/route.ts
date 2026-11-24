@@ -2,39 +2,93 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { parseSpokenDate, parseSpokenTime, getTodayDateStr } from '@/lib/dateUtils';
 
+const CLINIC_SLOTS = [
+  '10:00 AM', '10:20 AM', '10:40 AM',
+  '11:00 AM', '11:20 AM', '11:40 AM',
+  '12:00 PM', '12:20 PM', '12:40 PM',
+  '02:00 PM', '02:20 PM', '02:40 PM',
+  '03:00 PM', '03:20 PM', '03:40 PM',
+  '04:00 PM', '04:20 PM', '04:40 PM',
+];
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { doctor, date, time, patient_name, phone, call_id } = body;
 
-    const callerName = patient_name || body.name || 'Patient';
+    const callerName = patient_name || body.name || 'Caller';
     const callerPhone = phone || body.patient_phone || '9999999999';
     const cleanPhone = String(callerPhone).replace(/\D/g, '').slice(-10);
 
     // Sanitize Date and Time from spoken voice input
-    const cleanDate = parseSpokenDate(date);
-    const cleanTime = parseSpokenTime(time);
+    const cleanDate = parseSpokenDate(date || getTodayDateStr());
+    let cleanTime = parseSpokenTime(time);
 
-    // 1. Try to find doctor in Supabase
+    // 1. Resolve doctor in Supabase
     let docId: string | null = null;
     let doctorDisplayName = doctor || 'Dr. Rahul Sharma';
     try {
       const { data: docData } = await supabaseAdmin
         .from('doctors')
         .select('id, name')
-        .ilike('name', `%${doctorDisplayName.replace(/^Dr\.\s*/i, '')}%`)
+        .ilike('name', `%${doctorDisplayName.replace(/^Dr\.\s*/i, '').trim()}%`)
         .limit(1)
         .maybeSingle();
 
       if (docData) {
         docId = docData.id;
         doctorDisplayName = docData.name;
+      } else {
+        // Fallback to first available doctor
+        const { data: anyDoc } = await supabaseAdmin
+          .from('doctors')
+          .select('id, name')
+          .limit(1)
+          .maybeSingle();
+        if (anyDoc) {
+          docId = anyDoc.id;
+          doctorDisplayName = anyDoc.name;
+        }
       }
     } catch (e) {
       // Continue
     }
 
-    // 2. Create slot in doctor_slots if possible
+    // 2. Sequential Call-Wise Slot Allocation (FIFO)
+    // If no valid time provided or already booked, automatically assign the next sequential slot
+    try {
+      const { data: bookedSlots } = await supabaseAdmin
+        .from('doctor_slots')
+        .select('slot_start')
+        .gte('slot_start', `${cleanDate}T00:00:00.000Z`)
+        .lte('slot_start', `${cleanDate}T23:59:59.999Z`);
+
+      const bookedSet = new Set<string>();
+      if (bookedSlots) {
+        for (const s of bookedSlots) {
+          if (s.slot_start) {
+            const d = new Date(s.slot_start);
+            bookedSet.add(d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }));
+          }
+        }
+      }
+
+      // If caller didn't specify or selected an already booked slot, assign the next unbooked one
+      if (!cleanTime || bookedSet.has(cleanTime)) {
+        const nextAvailable = CLINIC_SLOTS.find(slot => !bookedSet.has(slot));
+        if (nextAvailable) {
+          cleanTime = nextAvailable;
+        } else {
+          // If all morning/afternoon taken, assign sequential based on count
+          const nextIdx = bookedSet.size % CLINIC_SLOTS.length;
+          cleanTime = CLINIC_SLOTS[nextIdx];
+        }
+      }
+    } catch (e) {
+      if (!cleanTime) cleanTime = '10:00 AM';
+    }
+
+    // 3. Create or reserve slot in doctor_slots
     let slotId: string | null = null;
     try {
       const slotIso = new Date(`${cleanDate} ${cleanTime}`).toISOString();
@@ -55,7 +109,7 @@ export async function POST(req: Request) {
       // Continue
     }
 
-    // 3. Insert into appointments table
+    // 4. Insert into appointments table
     const { data: newAppt, error: insertError } = await supabaseAdmin
       .from('appointments')
       .insert({
@@ -100,7 +154,6 @@ export async function POST(req: Request) {
   }
 }
 
-// Allow GET for quick health check
 export async function GET() {
-  return NextResponse.json({ status: 'ok', service: 'book-appointment' });
+  return NextResponse.json({ status: 'ok', service: 'book-appointment-sequential' });
 }
