@@ -9,7 +9,8 @@ import {
   Settings, 
   ShieldCheck,
   X,
-  Activity
+  Activity,
+  PhoneCall
 } from 'lucide-react';
 import { ActiveModule } from './types';
 
@@ -32,8 +33,9 @@ export default function Sidebar({
 }: SidebarProps) {
   const menuItems: { id: ActiveModule; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'doctors', label: 'Doctors', icon: Stethoscope },
     { id: 'appointments', label: 'Appointments', icon: CalendarDays },
+    { id: 'calls', label: 'Voice Calls', icon: PhoneCall },
+    { id: 'doctors', label: 'Doctors', icon: Stethoscope },
     { id: 'patients', label: 'Patients', icon: Users },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'settings', label: 'Settings', icon: Settings },

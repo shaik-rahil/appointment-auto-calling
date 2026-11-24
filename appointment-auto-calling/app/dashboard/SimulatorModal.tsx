@@ -55,7 +55,7 @@ export default function SimulatorModal({
           source: 'Bolna Voice AI Agent',
           status: 'confirmed',
           created_at: new Date().toISOString(),
-          doctors: { name: targetDoc.name, department: targetDoc.specialization },
+          doctors: { name: targetDoc.name, department: targetDoc.department || targetDoc.specialization },
           doctor_slots: { slot_start: now.toISOString() }
         };
 

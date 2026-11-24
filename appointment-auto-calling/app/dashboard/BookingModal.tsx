@@ -13,6 +13,7 @@ import {
   AlertTriangle 
 } from 'lucide-react';
 import { Doctor, Appointment, AppointmentStatus } from './types';
+import { getTodayDateStr } from '@/lib/dateUtils';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -69,7 +70,7 @@ export default function BookingModal({
       setPatientPhone('');
       setDoctorId(defaultDoc ? defaultDoc.id : '');
       setSpecialization(defaultDoc ? defaultDoc.specialization : '');
-      setDate(initialDate || '2026-11-21');
+      setDate(initialDate || getTodayDateStr());
       setTime('10:00 AM');
       setReason('');
       setStatus('Confirmed');

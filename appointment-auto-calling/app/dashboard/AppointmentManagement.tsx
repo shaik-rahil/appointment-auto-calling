@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Doctor, Appointment, AppointmentStatus } from './types';
 import BookingModal from './BookingModal';
+import { getTodayDateStr, getRelativeDateLabel, getQuickDates } from '@/lib/dateUtils';
 
 interface AppointmentManagementProps {
   doctors: Doctor[];
@@ -43,10 +44,12 @@ export default function AppointmentManagement({
   onDeleteAppointment,
   selectedDoctorId,
 }: AppointmentManagementProps) {
-  // Current calendar focus: November 2026, Today is 2026-11-21
-  const [currentYear, setCurrentYear] = useState(2026);
-  const [currentMonth, setCurrentMonth] = useState(10); // 10 is November
-  const [selectedDate, setSelectedDate] = useState('2026-11-21');
+  // Dynamic calendar focus: tracks real current date
+  const todayStr = useMemo(() => getTodayDateStr(), []);
+  const todayObj = useMemo(() => new Date(), []);
+  const [currentYear, setCurrentYear] = useState(todayObj.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(todayObj.getMonth());
+  const [selectedDate, setSelectedDate] = useState(todayStr);
   const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('month');
 
   // Filters
@@ -102,7 +105,7 @@ export default function AppointmentManagement({
     // Current month days
     for (let day = 1; day <= daysInCurrentMonth; day++) {
       const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const isToday = dateStr === '2026-11-21';
+      const isToday = dateStr === todayStr;
       const count = appointments.filter((a) => a.date === dateStr && a.status !== 'Cancelled').length;
       cells.push({ dateStr, dayNum: day, isCurrentMonth: true, isToday, count });
     }
@@ -291,9 +294,10 @@ export default function AppointmentManagement({
             </button>
             <button
               onClick={() => {
-                setCurrentYear(2026);
-                setCurrentMonth(10);
-                setSelectedDate('2026-11-21');
+                const now = new Date();
+                setCurrentYear(now.getFullYear());
+                setCurrentMonth(now.getMonth());
+                setSelectedDate(todayStr);
               }}
               className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition"
             >
@@ -428,11 +432,7 @@ export default function AppointmentManagement({
             </div>
             <div>
               <h3 className="text-xl font-black text-slate-900 tracking-tight">
-                {selectedDate === '2026-11-21' 
-                  ? "Today's Appointments – 21 November 2026"
-                  : selectedDate === '2026-11-22'
-                  ? "Tomorrow's Appointments – 22 November 2026"
-                  : `Appointments – ${selectedDate.split('-')[2]} November 2026`}
+                {getRelativeDateLabel(selectedDate)}
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 Real-time outpatient schedule & consultation tracking
@@ -445,41 +445,29 @@ export default function AppointmentManagement({
               Total Appointments: {selectedDateAppointments.length}
             </span>
 
-            {/* Quick date selector pills matching Image 2 */}
+            {/* Dynamic quick date selector pills */}
             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
               <span className="text-[11px] text-slate-400 uppercase font-extrabold mr-1">Quick Dates:</span>
-              <button
-                onClick={() => setSelectedDate('2026-11-20')}
-                className={`px-3 py-1.5 rounded-xl transition ${
-                  selectedDate === '2026-11-20' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Nov 20 (2)
-              </button>
-              <button
-                onClick={() => setSelectedDate('2026-11-21')}
-                className={`px-3 py-1.5 rounded-xl transition ${
-                  selectedDate === '2026-11-21' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Today: Nov 21 (5)
-              </button>
-              <button
-                onClick={() => setSelectedDate('2026-11-22')}
-                className={`px-3 py-1.5 rounded-xl transition ${
-                  selectedDate === '2026-11-22' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Nov 22 (4)
-              </button>
-              <button
-                onClick={() => setSelectedDate('2026-11-23')}
-                className={`px-3 py-1.5 rounded-xl transition ${
-                  selectedDate === '2026-11-23' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Nov 23 (1)
-              </button>
+              {getQuickDates(todayStr).map((qd) => {
+                const count = appointments.filter((a) => a.date === qd.dateStr && a.status !== 'Cancelled').length;
+                const isSel = selectedDate === qd.dateStr;
+                return (
+                  <button
+                    key={qd.dateStr}
+                    onClick={() => {
+                      setSelectedDate(qd.dateStr);
+                      const [y, m] = qd.dateStr.split('-').map(Number);
+                      setCurrentYear(y);
+                      setCurrentMonth(m - 1);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl transition ${
+                      isSel ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {qd.label} ({count})
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

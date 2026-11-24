@@ -72,7 +72,7 @@ export default function NewAppointmentModal({
         status: 'confirmed',
         created_at: new Date().toISOString(),
         notes: notes || undefined,
-        doctors: selectedDoc ? { name: selectedDoc.name, department: selectedDoc.specialization } : undefined,
+        doctors: selectedDoc ? { name: selectedDoc.name, department: selectedDoc.department || selectedDoc.specialization } : undefined,
         doctor_slots: { slot_start: slotDate.toISOString() }
       };
 
@@ -188,7 +188,7 @@ export default function NewAppointmentModal({
               >
                 {doctors.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name} ({d.specialization})
+                    {d.name} ({d.department || d.specialization})
                   </option>
                 ))}
               </select>

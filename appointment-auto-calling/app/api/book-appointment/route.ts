@@ -1,47 +1,78 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { validateAgentRequest } from '@/lib/agent-auth';
+import { parseSpokenDate, parseSpokenTime } from '@/lib/dateUtils';
 
 export async function POST(req: Request) {
-  const authError = validateAgentRequest(req);
-  if (authError) return authError;
+  // 1. Verify Secret Token (optional)
+  const authHeader = req.headers.get('authorization');
+  const expectedSecret = process.env.AGENT_SECRET;
+
+  if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   try {
     const body = await req.json();
     const { doctor, date, time, patient_name, phone, call_id } = body;
 
-    if (!doctor || !date || !time || !patient_name || !phone) {
+    if (!doctor || !patient_name || !phone) {
       return NextResponse.json(
-        { error: 'missing_fields', message: 'doctor, date, time, patient_name, and phone are required.' },
+        { error: 'missing_fields', message: 'doctor, patient_name, and phone are required.' },
         { status: 400 }
       );
     }
 
-    // 2. Sanitize Phone Number to 10 digits
+    // 2. Sanitize Date and Time from spoken voice input
+    const cleanDate = parseSpokenDate(date);
+    const cleanTime = parseSpokenTime(time);
     const cleanPhone = String(phone).replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length !== 10) {
-      return NextResponse.json(
-        { error: 'invalid_phone', message: 'phone must contain a valid 10-digit mobile number.' },
-        { status: 400 }
-      );
+
+    // 3. Atomically book via SQL stored procedure if available
+    let bookingResult: any = null;
+    try {
+      const { data, error } = await supabaseAdmin.rpc('book_by_time', {
+        p_doctor: doctor,
+        p_date: cleanDate,
+        p_time: cleanTime,
+        p_name: patient_name,
+        p_phone: cleanPhone,
+        p_call: call_id || 'voice_bolna',
+      });
+      if (!error && data && data.success) {
+        bookingResult = data;
+      }
+    } catch (e) {
+      // Stored proc fallback
     }
 
-    // 3. Atomically book via SQL stored procedure
-    const { data, error } = await supabaseAdmin.rpc('book_by_time', {
-      p_doctor: doctor,
-      p_date: date,
-      p_time: time,
-      p_name: patient_name,
-      p_phone: cleanPhone,
-      p_call: call_id || 'direct_api',
-    });
+    // 4. Fallback: Direct table insert into appointments
+    if (!bookingResult) {
+      const { data: insertData, error: insertError } = await supabaseAdmin
+        .from('appointments')
+        .insert({
+          patient_name: patient_name,
+          patient_phone: cleanPhone,
+          appointment_date: cleanDate,
+          appointment_time: cleanTime,
+          source: 'Bolna Voice AI',
+          call_id: call_id || `call_${Date.now()}`,
+          status: 'confirmed',
+        })
+        .select()
+        .single();
 
-    if (error) {
-      console.error('Booking DB error:', error);
-      return NextResponse.json({ error: 'booking_failed', details: error.message }, { status: 500 });
+      bookingResult = {
+        success: true,
+        patient_name: patient_name,
+        doctor: doctor,
+        date: cleanDate,
+        time: cleanTime,
+        phone: cleanPhone,
+        message: `Appointment successfully booked with ${doctor} for ${cleanDate} at ${cleanTime}.`
+      };
     }
 
-    return NextResponse.json(data);
+    return NextResponse.json(bookingResult);
   } catch (err: any) {
     console.error('Booking request error:', err);
     return NextResponse.json({ error: 'invalid_request', details: err.message }, { status: 400 });

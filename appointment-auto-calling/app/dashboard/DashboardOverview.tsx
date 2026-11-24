@@ -50,15 +50,21 @@ export default function DashboardOverview({
     if (onUpdateDoctorStatus) onUpdateDoctorStatus(id, status);
   };
 
-  // Schedule items for today (combining sample items from image 1)
-  const scheduleItems = [
-    { id: 'sc-1', patient: 'Emma Lindqvist', phone: '+1 (555) 902-1244', doctor: 'Dr. Elena Rostova', dept: 'Pediatrics (Rm 205)', tag: 'EL', tagColor: 'bg-emerald-100 text-emerald-800', status: 'scheduled' },
-    { id: 'sc-2', patient: 'Tariq Khan', phone: '+1 (555) 611-9230', doctor: 'Dr. James Wilson', dept: 'Neurology (Rm 402)', tag: 'TK', tagColor: 'bg-slate-200 text-slate-800', status: 'in_progress' },
-    { id: 'sc-3', patient: 'Ananya Chatterjee', phone: '+1 (555) 234-9981', doctor: 'Dr. Marcus Chen', dept: 'Cardiology (Rm 304)', tag: 'AC', tagColor: 'bg-blue-100 text-blue-800', status: 'completed' },
-    { id: 'sc-4', patient: 'David Lawson', phone: '+1 (555) 433-2890', doctor: 'Dr. Sarah Al-Mansoor', dept: 'Orthopedics (Rm 112)', tag: 'DL', tagColor: 'bg-rose-100 text-rose-800', status: 'cancelled' },
-    { id: 'sc-5', patient: 'Arun Kumar', phone: '+91 98450 11204', doctor: 'Dr. Rahul Sharma', dept: 'Cardiology (Rm 304)', tag: 'AK', tagColor: 'bg-blue-100 text-blue-800', status: 'scheduled' },
-    { id: 'sc-6', patient: 'Priya Sharma', phone: '+91 99160 33451', doctor: 'Dr. Priya Nair', dept: 'Pediatrics (Rm 205)', tag: 'PS', tagColor: 'bg-purple-100 text-purple-800', status: 'completed' },
-  ];
+  // Schedule items derived dynamically from real appointments
+  const scheduleItems = appointments.map((a) => {
+    const pName = a.patientName || a.patient_name || 'Patient';
+    const initials = pName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || 'PT';
+    return {
+      id: a.id,
+      patient: pName,
+      phone: a.patientPhone || a.phone ? `+91 ${a.patientPhone || a.phone}` : 'Direct Call',
+      doctor: a.doctorName || a.doctors?.name || 'Assigned Doctor',
+      dept: `${a.doctorSpecialization || a.doctors?.department || 'General Medicine'} · ${a.time}`,
+      tag: initials,
+      tagColor: 'bg-blue-100 text-blue-800',
+      status: (a.status || 'scheduled').toLowerCase(),
+    };
+  });
 
   const filteredSchedule = scheduleItems.filter((item) => {
     if (filterTab !== 'all' && item.status !== filterTab) return false;
@@ -298,7 +304,7 @@ export default function DashboardOverview({
               </div>
             </div>
 
-            {/* Filter Tabs matching Image 1 */}
+            {/* Filter Tabs */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap text-xs">
                 <button
@@ -307,7 +313,7 @@ export default function DashboardOverview({
                     filterTab === 'all' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  All (14)
+                  All ({scheduleItems.length})
                 </button>
                 <button
                   onClick={() => setFilterTab('scheduled')}
@@ -315,15 +321,7 @@ export default function DashboardOverview({
                     filterTab === 'scheduled' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  Scheduled (5)
-                </button>
-                <button
-                  onClick={() => setFilterTab('in_progress')}
-                  className={`px-3 py-1.5 rounded-xl font-bold transition ${
-                    filterTab === 'in_progress' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  In-Progress (3)
+                  Scheduled ({scheduleItems.filter((i) => i.status === 'scheduled' || i.status === 'confirmed').length})
                 </button>
                 <button
                   onClick={() => setFilterTab('completed')}
@@ -331,7 +329,7 @@ export default function DashboardOverview({
                     filterTab === 'completed' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  Completed (5)
+                  Completed ({scheduleItems.filter((i) => i.status === 'completed').length})
                 </button>
                 <button
                   onClick={() => setFilterTab('cancelled')}
@@ -339,44 +337,53 @@ export default function DashboardOverview({
                     filterTab === 'cancelled' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  Cancelled (1)
+                  Cancelled ({scheduleItems.filter((i) => i.status === 'cancelled').length})
                 </button>
               </div>
 
               <div className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold">
                 <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin" />
-                <span>Auto-refreshing</span>
+                <span>Live Synchronizing</span>
               </div>
             </div>
 
-            {/* List of Patients matching Image 1 */}
+            {/* List of Real Patients */}
             <div className="space-y-3">
-              {filteredSchedule.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-white hover:border-slate-200 hover:shadow-xs transition flex flex-wrap items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center text-xs ${item.tagColor}`}>
-                      {item.tag}
-                    </span>
-                    <div>
-                      <h4 className="font-bold text-slate-900">{item.patient}</h4>
-                      <p className="text-[11px] text-slate-400 font-mono">{item.phone}</p>
+              {filteredSchedule.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50/60 rounded-2xl border border-slate-100 text-slate-400">
+                  <p className="font-bold text-xs text-slate-700">No appointments logged yet</p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Existing mock data cleared. When you complete a call in Bolna AI or make a test booking, it will appear here immediately.
+                  </p>
+                </div>
+              ) : (
+                filteredSchedule.map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-3.5 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-white hover:border-slate-200 hover:shadow-xs transition flex flex-wrap items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center text-xs ${item.tagColor}`}>
+                        {item.tag}
+                      </span>
+                      <div>
+                        <h4 className="font-bold text-slate-900">{item.patient}</h4>
+                        <p className="text-[11px] text-slate-400 font-mono">{item.phone}</p>
+                      </div>
+                    </div>
+
+                    <div className="text-right sm:text-left">
+                      <span className="font-semibold text-slate-800">{item.doctor}</span>
+                      <span className="text-[11px] text-slate-400 block">{item.dept}</span>
                     </div>
                   </div>
-
-                  <div className="text-right sm:text-left">
-                    <span className="font-semibold text-slate-800">{item.doctor}</span>
-                    <span className="text-[11px] text-slate-400 block">{item.dept}</span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             {/* Pagination footer */}
             <div className="pt-2 flex items-center justify-between text-xs text-slate-400 border-t border-slate-100">
-              <span>Showing 6 of 14 appointments scheduled today</span>
+              <span>Showing {filteredSchedule.length} of {appointments.length} appointments</span>
               <div className="flex items-center gap-1.5">
                 <button className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">Previous</button>
                 <button className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-bold">1</button>

@@ -1,11 +1,21 @@
 export type DoctorStatus = 'Available' | 'Not Available' | 'On Leave';
-export type AppointmentStatus = 'Scheduled' | 'Confirmed' | 'Completed' | 'Cancelled';
+export type AppointmentStatus = 
+  | 'Scheduled' 
+  | 'Confirmed' 
+  | 'Completed' 
+  | 'Cancelled' 
+  | 'scheduled' 
+  | 'confirmed' 
+  | 'completed' 
+  | 'cancelled' 
+  | 'arrived';
 
 export interface Doctor {
   id: string;
   doctorId: string; // e.g. 'DOC-101'
   name: string;
   specialization: string;
+  department?: string;
   phone: string;
   email: string;
   consultationTimings: string;
@@ -27,24 +37,36 @@ export interface Appointment {
   status: AppointmentStatus;
   createdAt: string;
   notes?: string;
-  // Optional Supabase relationship fields used by appointment detail views.
+  source?: string;
+  // Supabase snake_case & nested compatibility:
   patient_name?: string;
   phone?: string;
-  source?: string;
   created_at?: string;
-  doctors?: { name?: string; department?: string } | null;
-  doctor_slots?: { slot_start?: string } | null;
+  doctors?: {
+    name?: string;
+    department?: string;
+    specialization?: string;
+  };
+  doctor_slots?: {
+    slot_start?: string;
+  };
 }
 
+export type CallOutcome = 'booked' | 'transferred' | 'info_only' | 'emergency_redirect' | 'missed' | 'dropped';
+
 export interface CallLog {
+  id: string;
   call_id: string;
   phone: string;
   duration_sec: number;
   summary: string;
   transcript: string;
-  outcome: 'booked' | 'transferred' | 'info_only' | 'missed' | string;
-  recording_url?: string | null;
+  outcome: CallOutcome;
   created_at: string;
+  recording_url?: string | null;
+  language?: string;
+  cost_inr?: number;
+  emergency_flag?: boolean;
 }
 
 export interface PatientRecord {
@@ -56,4 +78,4 @@ export interface PatientRecord {
   primaryDoctor?: string;
 }
 
-export type ActiveModule = 'dashboard' | 'doctors' | 'appointments' | 'patients' | 'reports' | 'settings';
+export type ActiveModule = 'dashboard' | 'doctors' | 'appointments' | 'calls' | 'patients' | 'reports' | 'settings';

@@ -49,7 +49,7 @@ export default function AppointmentDetailModal({
         month: 'short',
         year: 'numeric'
       })
-    : new Date(appointment.created_at || appointment.createdAt).toLocaleDateString('en-IN', {
+    : new Date(appointment.created_at || appointment.createdAt || Date.now()).toLocaleDateString('en-IN', {
         day: 'numeric',
         month: 'short',
         year: 'numeric'
@@ -59,8 +59,12 @@ export default function AppointmentDetailModal({
     window.print();
   };
 
-  const whatsappUrl = `https://wa.me/91${appointment.phone}?text=${encodeURIComponent(
-    `Hello ${appointment.patient_name}, your appointment at City Hospital with ${appointment.doctors?.name || 'the Doctor'} is scheduled for ${slotFormatted}. Please arrive 10 minutes early. Thank you!`
+  const patientPhone = appointment.patientPhone || appointment.phone || '';
+  const patientName = appointment.patientName || appointment.patient_name || 'Patient';
+  const docName = appointment.doctorName || appointment.doctors?.name || 'the Doctor';
+
+  const whatsappUrl = `https://wa.me/91${patientPhone}?text=${encodeURIComponent(
+    `Hello ${patientName}, your appointment at City Hospital with ${docName} is scheduled for ${slotFormatted}. Please arrive 10 minutes early. Thank you!`
   )}`;
 
   return (
@@ -76,8 +80,8 @@ export default function AppointmentDetailModal({
               <User className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">{appointment.patient_name}</h3>
-              <p className="text-xs text-slate-400 font-mono">+91 {appointment.phone}</p>
+              <h3 className="font-bold text-base text-white">{patientName}</h3>
+              <p className="text-xs text-slate-400 font-mono">+91 {patientPhone}</p>
             </div>
           </div>
           <button
@@ -101,7 +105,7 @@ export default function AppointmentDetailModal({
               </p>
             </div>
             <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-              {(['Confirmed', 'Scheduled', 'Completed', 'Cancelled'] as const).map((st) => (
+              {(['confirmed', 'arrived', 'completed', 'cancelled'] as const).map((st) => (
                 <button
                   key={st}
                   onClick={() => onStatusChange(appointment.id, st)}
@@ -152,7 +156,7 @@ export default function AppointmentDetailModal({
           <div className="space-y-2 pt-2 border-t border-slate-100">
             <div className="grid grid-cols-2 gap-3">
               <a
-                href={`tel:+91${appointment.phone}`}
+                href={`tel:+91${patientPhone}`}
                 className="py-2.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs flex items-center justify-center gap-2 transition"
               >
                 <Phone className="w-3.5 h-3.5 text-blue-600" />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Menu, 
   Calendar as CalendarIcon, 
@@ -13,9 +13,11 @@ import {
   Search,
   Bell,
   Activity,
-  User
+  User,
+  PhoneCall,
+  Sparkles
 } from 'lucide-react';
-import { ActiveModule, Doctor, Appointment, AppointmentStatus, DoctorStatus } from './types';
+import { ActiveModule, Doctor, Appointment, AppointmentStatus, DoctorStatus, CallLog } from './types';
 import { 
   loadStoredDoctors, 
   saveStoredDoctors, 
@@ -23,6 +25,7 @@ import {
   saveStoredAppointments,
   resetDemoData 
 } from './dataStore';
+import { getTodayDateStr, formatDisplayDate } from '@/lib/dateUtils';
 
 import Sidebar from './Sidebar';
 import DashboardOverview from './DashboardOverview';
@@ -32,7 +35,9 @@ import PatientsView from './PatientsView';
 import ReportsView from './ReportsView';
 import SettingsView from './SettingsView';
 import BookingModal from './BookingModal';
-import { supabase } from '@/lib/supabase';
+import VoiceCallsView from './VoiceCallsView';
+import CallDetailModal from './CallDetailModal';
+import SimulatorModal from './SimulatorModal';
 
 interface Toast {
   id: string;
@@ -48,6 +53,10 @@ export default function DashboardPage() {
   // Doctors & Appointments State
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [callLogs, setCallLogs] = useState<CallLog[]>([]);
+  const [selectedCall, setSelectedCall] = useState<CallLog | null>(null);
+  const [isCallDetailOpen, setIsCallDetailOpen] = useState(false);
+  const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Global Booking Modal
@@ -59,68 +68,7 @@ export default function DashboardPage() {
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // Load persistent data
-  useEffect(() => {
-    const loadedDocs = loadStoredDoctors();
-    const loadedAppts = loadStoredAppointments();
-    setDoctors(loadedDocs);
-    setAppointments(loadedAppts);
-    setIsLoaded(true);
-
-    const refreshAppointments = async () => {
-      const { data, error } = await supabase
-        .from('appointments')
-        .select('*, doctors(name, department), doctor_slots(slot_start)')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Could not load Supabase appointments:', error.message);
-        return;
-      }
-
-      const rows = (data || []) as any[];
-      setAppointments(rows.map((row) => {
-        const doctor = Array.isArray(row.doctors) ? row.doctors[0] : row.doctors;
-        const slot = Array.isArray(row.doctor_slots) ? row.doctor_slots[0] : row.doctor_slots;
-        const slotStart = slot?.slot_start ? new Date(slot.slot_start) : null;
-        const date = slotStart
-          ? `${slotStart.getFullYear()}-${String(slotStart.getMonth() + 1).padStart(2, '0')}-${String(slotStart.getDate()).padStart(2, '0')}`
-          : row.date || '';
-        const time = slotStart
-          ? slotStart.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-          : row.time || '';
-        const rawStatus = String(row.status || 'Confirmed').toLowerCase();
-        const status = rawStatus.charAt(0).toUpperCase() + rawStatus.slice(1);
-
-        return {
-          id: String(row.id),
-          patientName: row.patient_name || 'Patient',
-          patientPhone: row.phone || '',
-          doctorId: String(row.doctor_id || ''),
-          doctorName: doctor?.name || 'Unassigned doctor',
-          doctorSpecialization: doctor?.department || 'General Medicine',
-          date,
-          time,
-          reason: row.reason || row.notes || '',
-          status: status === 'Cancelled' ? 'Cancelled' : status === 'Completed' ? 'Completed' : status === 'Scheduled' ? 'Scheduled' : 'Confirmed',
-          createdAt: row.created_at || new Date().toISOString(),
-          notes: row.notes || undefined,
-        } as Appointment;
-      }));
-    };
-
-    void refreshAppointments();
-    const channel = supabase
-      .channel('dashboard-appointments')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => {
-        void refreshAppointments();
-      })
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, []);
+  const todayStr = getTodayDateStr();
 
   const showToast = (title: string, message: string, type: Toast['type'] = 'success') => {
     const id = `toast_${Date.now()}_${Math.random()}`;
@@ -130,6 +78,58 @@ export default function DashboardPage() {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   };
+
+  // Sync Calls & Backend Appointments
+  const syncServerData = useCallback(async () => {
+    try {
+      // 1. Fetch live voice calls from telephony / call-ended webhook
+      const callsRes = await fetch('/api/calls');
+      if (callsRes.ok) {
+        const data = await callsRes.json();
+        if (data.calls && Array.isArray(data.calls)) {
+          setCallLogs(data.calls);
+        }
+      }
+
+      // 2. Fetch live appointments from database
+      const apptRes = await fetch('/api/appointments');
+      if (apptRes.ok) {
+        const apptData = await apptRes.json();
+        if (apptData.appointments && Array.isArray(apptData.appointments) && apptData.appointments.length > 0) {
+          setAppointments((prev) => {
+            const merged = [...apptData.appointments];
+            prev.forEach((localAppt) => {
+              if (!merged.some((m) => m.id === localAppt.id)) {
+                merged.push(localAppt);
+              }
+            });
+            saveStoredAppointments(merged);
+            return merged;
+          });
+        }
+      }
+    } catch (e) {
+      // Quiet background sync fail
+    }
+  }, []);
+
+  // Load persistent data & start real-time sync loop
+  useEffect(() => {
+    const loadedDocs = loadStoredDoctors();
+    const loadedAppts = loadStoredAppointments();
+    setDoctors(loadedDocs);
+    setAppointments(loadedAppts);
+    setIsLoaded(true);
+
+    syncServerData();
+
+    // Poll every 7 seconds so incoming calls & appointments capture automatically
+    const timer = setInterval(() => {
+      syncServerData();
+    }, 7000);
+
+    return () => clearInterval(timer);
+  }, [syncServerData]);
 
   // Doctors Handlers
   const handleUpdateDoctor = (updated: Doctor) => {
@@ -171,7 +171,7 @@ export default function DashboardPage() {
   };
 
   // Appointments Handlers
-  const handleSaveAppointment = (appt: Appointment) => {
+  const handleSaveAppointment = async (appt: Appointment) => {
     setAppointments((prev) => {
       const exists = prev.some((a) => a.id === appt.id);
       let next: Appointment[];
@@ -185,6 +185,17 @@ export default function DashboardPage() {
       saveStoredAppointments(next);
       return next;
     });
+
+    // Also push to /api/appointments so backend captures it
+    try {
+      await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(appt),
+      });
+    } catch (e) {
+      // Ignored
+    }
   };
 
   const handleUpdateApptStatus = (id: string, status: AppointmentStatus) => {
@@ -213,8 +224,46 @@ export default function DashboardPage() {
     showToast('Data Restored', 'Demo doctors and appointments reloaded to default sample state.');
   };
 
-  const handleBookForPatient = (name: string, phone: string) => {
+  const handleBookForPatient = () => {
     setIsBookingModalOpen(true);
+  };
+
+  const handleSelectCall = (call: CallLog) => {
+    setSelectedCall(call);
+    setIsCallDetailOpen(true);
+  };
+
+  const handleSimulatedBooking = (booking: any) => {
+    const newAppt: Appointment = {
+      id: booking.id || `appt_${Date.now()}`,
+      patientName: booking.patient_name,
+      patientPhone: booking.phone,
+      doctorId: booking.doctor_id || doctors[0]?.id || 'doc-101',
+      doctorName: booking.doctors?.name || doctors[0]?.name || 'Dr. Rahul Sharma',
+      doctorSpecialization: booking.doctors?.department || 'Cardiology',
+      date: todayStr,
+      time: '11:00 AM',
+      reason: 'Booked via AI Voice Call',
+      status: 'Confirmed',
+      createdAt: new Date().toISOString(),
+      source: 'Bolna Voice AI',
+    };
+    handleSaveAppointment(newAppt);
+  };
+
+  const handleSimulatedCall = (call: any) => {
+    const newLog: CallLog = {
+      id: call.id,
+      call_id: call.call_id,
+      phone: call.phone,
+      duration_sec: call.duration_sec,
+      summary: call.summary,
+      transcript: call.transcript,
+      outcome: call.outcome,
+      created_at: call.created_at,
+    };
+    setCallLogs((prev) => [newLog, ...prev]);
+    showToast('Voice Call Captured', `New telephone call from +91 ${newLog.phone} transcribed.`);
   };
 
   if (!isLoaded) {
@@ -225,7 +274,7 @@ export default function DashboardPage() {
     );
   }
 
-  const todayCount = appointments.filter((a) => a.date === '2026-11-21' && a.status !== 'Cancelled').length;
+  const todayCount = appointments.filter((a) => a.date === todayStr && a.status !== 'Cancelled').length;
   const availableDocsCount = doctors.filter((d) => d.status === 'Available').length;
 
   return (
@@ -272,7 +321,7 @@ export default function DashboardPage() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-        {/* Top Navbar matching Image 1, 2, 3 */}
+        {/* Top Navbar */}
         <header className="bg-white border-b border-slate-200/90 sticky top-0 z-30 px-6 py-3 flex items-center justify-between gap-4 shadow-2xs">
           {/* Mobile hamburger */}
           <button
@@ -282,12 +331,12 @@ export default function DashboardPage() {
             <Menu className="w-5 h-5" />
           </button>
 
-          {/* Search bar matching images */}
+          {/* Search bar */}
           <div className="flex-1 max-w-md relative hidden sm:block">
             <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
             <input
               type="text"
-              placeholder="Search doctors, patients, appointments..."
+              placeholder="Search doctors, patients, appointments, phone numbers..."
               value={topSearch}
               onChange={(e) => setTopSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-slate-50/70 border border-slate-200/80 rounded-2xl text-xs font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
@@ -296,16 +345,25 @@ export default function DashboardPage() {
 
           {/* Right Header Status, Date, Notification, User Profile */}
           <div className="flex items-center gap-3 sm:gap-4 ml-auto">
+            {/* Quick Test Voice Call Button */}
+            <button
+              onClick={() => setIsSimulatorOpen(true)}
+              className="hidden sm:flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-xs transition"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-blue-200" />
+              <span>Simulate Voice Call</span>
+            </button>
+
             {/* ACTIVE OPERATION badge */}
             <div className="hidden md:flex items-center gap-2 bg-blue-50/80 border border-blue-200/80 px-3 py-1.5 rounded-full text-blue-700 text-xs font-bold">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               ACTIVE OPERATION
             </div>
 
-            {/* Date Display */}
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl">
-              <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
-              <span>Today, 21 Nov 2026</span>
+            {/* Dynamic Real-World Date Display */}
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl">
+              <CalendarIcon className="w-3.5 h-3.5 text-blue-600" />
+              <span>Today, {formatDisplayDate()}</span>
             </div>
 
             {/* Notification Bell */}
@@ -340,15 +398,6 @@ export default function DashboardPage() {
             />
           )}
 
-          {activeModule === 'doctors' && (
-            <DoctorManagement
-              doctors={doctors}
-              onUpdateDoctor={handleUpdateDoctor}
-              onAddDoctor={handleAddDoctor}
-              onDeleteDoctor={handleDeleteDoctor}
-            />
-          )}
-
           {activeModule === 'appointments' && (
             <AppointmentManagement
               doctors={doctors}
@@ -356,6 +405,24 @@ export default function DashboardPage() {
               onSaveAppointment={handleSaveAppointment}
               onUpdateStatus={handleUpdateApptStatus}
               onDeleteAppointment={handleDeleteAppointment}
+            />
+          )}
+
+          {activeModule === 'calls' && (
+            <VoiceCallsView
+              calls={callLogs}
+              onSelectCall={handleSelectCall}
+              onRefresh={syncServerData}
+              onSimulateCall={() => setIsSimulatorOpen(true)}
+            />
+          )}
+
+          {activeModule === 'doctors' && (
+            <DoctorManagement
+              doctors={doctors}
+              onUpdateDoctor={handleUpdateDoctor}
+              onAddDoctor={handleAddDoctor}
+              onDeleteDoctor={handleDeleteDoctor}
             />
           )}
 
@@ -387,7 +454,27 @@ export default function DashboardPage() {
         doctors={doctors}
         appointments={appointments}
         onSaveAppointment={handleSaveAppointment}
-        initialDate="2026-11-21"
+        initialDate={todayStr}
+      />
+
+      {/* Full Voice Call Transcript Modal */}
+      <CallDetailModal
+        isOpen={isCallDetailOpen}
+        onClose={() => setIsCallDetailOpen(false)}
+        call={selectedCall}
+        onQuickBook={(phone) => {
+          setIsCallDetailOpen(false);
+          setIsBookingModalOpen(true);
+        }}
+      />
+
+      {/* Phone Call Simulator Modal */}
+      <SimulatorModal
+        isOpen={isSimulatorOpen}
+        onClose={() => setIsSimulatorOpen(false)}
+        doctors={doctors}
+        onSimulatedBooking={handleSimulatedBooking}
+        onSimulatedCall={handleSimulatedCall}
       />
     </div>
   );

@@ -51,7 +51,7 @@ export default function CallDetailModal({
     }
 
     // Split if formatted with lines like "Caller: ...\nAgent: ..."
-    return call.transcript.split('\n').filter(Boolean).map(line => {
+    return call.transcript.split('\n').filter(Boolean).map((line: string) => {
       const isCaller = line.toLowerCase().startsWith('user:') || line.toLowerCase().startsWith('caller:');
       const text = line.replace(/^(user:|caller:|agent:|ai:)/i, '').trim();
       return {
@@ -165,7 +165,7 @@ export default function CallDetailModal({
               Full Voice Transcript
             </h4>
             <div className="space-y-3 p-4 rounded-2xl bg-slate-50/80 border border-slate-100 max-h-56 overflow-y-auto">
-              {transcriptLines.map((line, idx) => (
+              {transcriptLines.map((line: { sender: string; text: string }, idx: number) => (
                 <div
                   key={idx}
                   className={`flex flex-col ${line.sender === 'Caller' ? 'items-start' : 'items-end'}`}

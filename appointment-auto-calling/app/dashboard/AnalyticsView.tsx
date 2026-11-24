@@ -29,7 +29,7 @@ export default function AnalyticsView({
   // Compute department breakdown
   const deptCounts: Record<string, number> = {};
   appointments.forEach((a) => {
-    const dept = a.doctors?.department || 'General Medicine';
+    const dept = a.doctors?.department || a.doctorSpecialization || 'General Medicine';
     deptCounts[dept] = (deptCounts[dept] || 0) + 1;
   });
 
