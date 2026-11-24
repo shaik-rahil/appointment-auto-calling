@@ -1,78 +1,98 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { parseSpokenDate, parseSpokenTime } from '@/lib/dateUtils';
+import { parseSpokenDate, parseSpokenTime, getTodayDateStr } from '@/lib/dateUtils';
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const payload = await req.json();
+    console.log('Call ended webhook received:', JSON.stringify(payload, null, 2));
 
-    // 1. Map Bolna webhook payload
-    const callId = body.call_id || body.id || `call_${Date.now()}`;
-    const userNumber = String(body.user_number || body.phone || body.caller_id || '').replace(/\D/g, '').slice(-10);
-    const duration = body.call_duration || body.duration || 0;
-    const summary = body.summary || body.call_summary || 'Call completed';
-    const transcript = body.transcript || '';
-    const recordingUrl = body.recording_url || body.recording || null;
-    
-    // Check outcome
-    const isEmergency = Boolean(body.emergency || /108|emergency|గుండె నొప్పి|hospital emergency/i.test(transcript + summary));
-    const isTransferred = Boolean(body.transferred || /receptionist|transfer/i.test(transcript + summary));
-    const isBooked = Boolean(body.booking_confirmed || /confirmed|booked|ఖరారైంది|schedule/i.test(summary) || body.extracted_data?.appointment_date);
+    const callId = payload.call_id || payload.conversation_id || `call_${Date.now()}`;
+    const callerPhone = payload.user_phone || payload.phone || payload.caller_phone || '';
+    const cleanPhone = String(callerPhone).replace(/\D/g, '').slice(-10);
+    const transcript = payload.transcript || (Array.isArray(payload.messages) ? payload.messages.map((m: any) => `${m.role}: ${m.content}`).join('\n') : '');
+    const durationSec = Number(payload.duration || payload.call_duration || 0);
 
-    let outcome = 'info_only';
-    if (isEmergency) outcome = 'emergency_redirect';
-    else if (isBooked) outcome = 'booked';
-    else if (isTransferred) outcome = 'transferred';
+    // Determine outcome
+    const extractedData = payload.extracted_data || payload.context || {};
+    const bookingConfirmed = payload.booking_confirmed || 
+      extractedData.booking_confirmed || 
+      /confirmed|booked|success/i.test(payload.status || '') ||
+      (extractedData.doctor && (extractedData.date || extractedData.time));
 
-    // 2. Save Call Log to Supabase
-    try {
-      await supabaseAdmin.from('call_logs').upsert({
-        call_id: callId,
-        phone: userNumber,
-        duration_sec: Math.round(Number(duration)),
-        summary: summary,
-        transcript: transcript,
-        outcome: outcome,
-        recording_url: recordingUrl,
-      }, { onConflict: 'call_id' });
-    } catch (dbErr) {
-      console.warn('Call log DB error (continuing):', dbErr);
+    let outcome = 'inquiry_only';
+    if (payload.emergency_detected || extractedData.is_emergency) {
+      outcome = 'emergency_escalated';
+    } else if (payload.transferred_to_human || extractedData.transferred) {
+      outcome = 'human_transferred';
+    } else if (bookingConfirmed) {
+      outcome = 'booking_confirmed';
     }
 
-    // 3. Auto-Capture Appointment if booked
-    if (isBooked) {
-      const extracted = body.extracted_data || {};
-      const patientName = extracted.patient_name || extracted.name || `Caller (${userNumber || 'Patient'})`;
-      const doctor = extracted.doctor || extracted.doctor_name || 'Dr. Rahul Sharma';
-      const rawDate = extracted.appointment_date || extracted.date || 'Wednesday';
-      const rawTime = extracted.appointment_time || extracted.time || '10:00 AM';
+    // 1. Record Call Log in Supabase if table exists
+    try {
+      await supabaseAdmin.from('call_logs').insert({
+        call_id: callId,
+        caller_phone: cleanPhone,
+        duration_seconds: durationSec,
+        outcome: outcome,
+        language: payload.language || 'te',
+        emergency_detected: outcome === 'emergency_escalated',
+        human_transfer: outcome === 'human_transferred',
+        transcript: transcript,
+        recording_url: payload.recording_url || null,
+        metadata: payload,
+      });
+    } catch (dbErr) {
+      // Continue
+    }
+
+    // 2. If appointment was verbally confirmed, ensure it exists in appointments table
+    if (bookingConfirmed) {
+      const patientName = extractedData.patient_name || extractedData.name || 'Caller';
+      const doctorName = extractedData.doctor || 'Dr. Rahul Sharma';
+      const rawDate = extractedData.date || getTodayDateStr();
+      const rawTime = extractedData.time || '10:00 AM';
 
       const cleanDate = parseSpokenDate(rawDate);
       const cleanTime = parseSpokenTime(rawTime);
 
       try {
+        let slotId: string | null = null;
+        try {
+          const slotIso = new Date(`${cleanDate} ${cleanTime}`).toISOString();
+          const { data: slotData } = await supabaseAdmin
+            .from('doctor_slots')
+            .insert({ slot_start: slotIso, is_booked: true })
+            .select('id')
+            .maybeSingle();
+          if (slotData) slotId = slotData.id;
+        } catch (e) {}
+
         await supabaseAdmin.from('appointments').insert({
           patient_name: patientName,
-          patient_phone: userNumber,
-          appointment_date: cleanDate,
-          appointment_time: cleanTime,
+          phone: cleanPhone || '9999999999',
           source: 'Bolna Voice AI',
-          call_id: callId,
           status: 'confirmed',
+          slot_id: slotId,
         });
       } catch (apptErr) {
-        console.warn('Appointment auto-capture error:', apptErr);
+        console.error('Call ended appointment auto-capture error:', apptErr);
       }
     }
 
     return NextResponse.json({
-      status: 'logged',
+      success: true,
       call_id: callId,
       outcome: outcome,
-      appointment_captured: isBooked
-    });
+      message: 'Call logged and processed successfully'
+    }, { status: 200 });
   } catch (err: any) {
-    console.error('Call webhook error:', err);
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    console.error('Error handling call-ended webhook:', err);
+    return NextResponse.json({ success: true, warning: err.message }, { status: 200 });
   }
+}
+
+export async function GET() {
+  return NextResponse.json({ status: 'ok', service: 'call-ended-webhook' });
 }

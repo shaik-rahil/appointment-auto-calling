@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { getTodayDateStr } from '@/lib/dateUtils';
 
 export async function GET() {
   try {
@@ -7,20 +8,22 @@ export async function GET() {
       .from('appointments')
       .select(`
         id,
-        slot_id,
-        doctor_id,
         patient_name,
-        patient_phone,
-        appointment_date,
-        appointment_time,
+        phone,
         source,
-        call_id,
         status,
+        doctor_id,
+        slot_id,
         created_at,
         doctors (
           id,
           name,
-          specialization
+          department
+        ),
+        doctor_slots (
+          id,
+          slot_start,
+          is_booked
         )
       `)
       .order('created_at', { ascending: false });
@@ -30,19 +33,37 @@ export async function GET() {
       return NextResponse.json({ appointments: [], error: error.message }, { status: 200 });
     }
 
-    const mapped = (data || []).map((row: any) => ({
-      id: row.id,
-      patientName: row.patient_name,
-      patientPhone: row.patient_phone,
-      doctorId: row.doctor_id,
-      doctorName: row.doctors?.name || 'Dr. Assigned',
-      doctorSpecialization: row.doctors?.specialization || 'General',
-      date: row.appointment_date,
-      time: row.appointment_time,
-      reason: row.source ? `Booked via ${row.source}` : 'Clinical Consultation',
-      status: row.status ? (row.status.charAt(0).toUpperCase() + row.status.slice(1)) : 'Scheduled',
-      createdAt: row.created_at,
-    }));
+    const mapped = (data || []).map((row: any) => {
+      let date = getTodayDateStr();
+      let time = '10:00 AM';
+      if (row.doctor_slots?.slot_start) {
+        const d = new Date(row.doctor_slots.slot_start);
+        if (!isNaN(d.getTime())) {
+          date = d.toISOString().split('T')[0];
+          time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+      } else if (row.created_at) {
+        const d = new Date(row.created_at);
+        if (!isNaN(d.getTime())) {
+          date = d.toISOString().split('T')[0];
+          time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+      }
+
+      return {
+        id: row.id,
+        patientName: row.patient_name || 'Patient',
+        patientPhone: row.phone || '',
+        doctorId: row.doctor_id,
+        doctorName: row.doctors?.name || 'Dr. Assigned',
+        doctorSpecialization: row.doctors?.department || 'General Consultation',
+        date: date,
+        time: time,
+        reason: row.source ? `Booked via ${row.source}` : 'Clinical Consultation',
+        status: row.status ? (row.status.charAt(0).toUpperCase() + row.status.slice(1)) : 'Scheduled',
+        createdAt: row.created_at,
+      };
+    });
 
     return NextResponse.json({ appointments: mapped });
   } catch (err: any) {
@@ -66,25 +87,45 @@ export async function POST(req: Request) {
       status,
     } = body;
 
-    if (!patientName || !patientPhone || !date || !time) {
+    if (!patientName || !patientPhone) {
       return NextResponse.json({ error: 'Missing required appointment fields' }, { status: 400 });
     }
 
     const cleanPhone = String(patientPhone).replace(/\D/g, '').slice(-10);
 
+    // Create slot if date/time provided
+    let slotId: string | null = null;
+    if (date && time) {
+      try {
+        const slotIso = new Date(`${date} ${time}`).toISOString();
+        const { data: slotData } = await supabaseAdmin
+          .from('doctor_slots')
+          .insert({
+            doctor_id: doctorId || null,
+            slot_start: slotIso,
+            is_booked: true,
+          })
+          .select('id')
+          .single();
+        if (slotData) {
+          slotId = slotData.id;
+        }
+      } catch (e) {
+        // Continue without slotId
+      }
+    }
+
     const { data, error } = await supabaseAdmin.from('appointments').insert({
-      patient_name: patientName,
-      patient_phone: cleanPhone,
+      patient_name: patientName.trim(),
+      phone: cleanPhone,
       doctor_id: doctorId || null,
-      appointment_date: date,
-      appointment_time: time,
-      source: 'web_dashboard',
+      slot_id: slotId,
+      source: reason || 'Voice AI',
       status: (status || 'confirmed').toLowerCase(),
     }).select().single();
 
     if (error) {
       console.warn('Supabase insert warning:', error.message);
-      // Return success with local payload so frontend continues without blocking
       return NextResponse.json({
         success: true,
         savedToDb: false,
@@ -98,13 +139,13 @@ export async function POST(req: Request) {
       appointment: {
         id: data.id,
         patientName: data.patient_name,
-        patientPhone: data.patient_phone,
+        patientPhone: data.phone,
         doctorId: data.doctor_id || doctorId,
-        doctorName: doctorName || 'Assigned Doctor',
-        doctorSpecialization: doctorSpecialization || 'General',
-        date: data.appointment_date,
-        time: data.appointment_time,
-        reason: reason || 'Clinical Consultation',
+        doctorName: doctorName || 'Dr. Assigned',
+        doctorSpecialization: doctorSpecialization || 'General Consultation',
+        date: date || getTodayDateStr(),
+        time: time || '10:00 AM',
+        reason: reason || 'Booked via Voice AI',
         status: status || 'Confirmed',
         createdAt: data.created_at,
       }
