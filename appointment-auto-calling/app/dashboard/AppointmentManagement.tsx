@@ -506,8 +506,13 @@ export default function AppointmentManagement({
 
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-extrabold text-slate-900 text-sm">
+                        <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
                           {appt.patientName}
+                          {(appt.patientAge || appt.age) && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[11px] font-semibold border border-blue-200">
+                              {appt.patientAge || appt.age} yrs
+                            </span>
+                          )}
                         </h4>
                         <span className="font-mono text-xs text-slate-500 font-medium">
                           +91 {appt.patientPhone}

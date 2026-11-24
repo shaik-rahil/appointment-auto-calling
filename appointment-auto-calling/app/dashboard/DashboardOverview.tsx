@@ -57,6 +57,7 @@ export default function DashboardOverview({
     return {
       id: a.id,
       patient: pName,
+      age: a.patientAge || a.age,
       phone: a.patientPhone || a.phone ? `+91 ${a.patientPhone || a.phone}` : 'Direct Call',
       doctor: a.doctorName || a.doctors?.name || 'Assigned Doctor',
       dept: `${a.doctorSpecialization || a.doctors?.department || 'General Medicine'} · ${a.time}`,
@@ -367,7 +368,14 @@ export default function DashboardOverview({
                         {item.tag}
                       </span>
                       <div>
-                        <h4 className="font-bold text-slate-900">{item.patient}</h4>
+                        <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                          {item.patient}
+                          {item.age && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-200">
+                              {item.age} yrs
+                            </span>
+                          )}
+                        </h4>
                         <p className="text-[11px] text-slate-400 font-mono">{item.phone}</p>
                       </div>
                     </div>

@@ -28,6 +28,8 @@ export interface Appointment {
   id: string;
   patientName: string;
   patientPhone: string;
+  patientAge?: number;
+  age?: number;
   doctorId: string;
   doctorName: string;
   doctorSpecialization: string;

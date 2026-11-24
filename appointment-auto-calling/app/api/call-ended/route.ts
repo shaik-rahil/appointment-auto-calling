@@ -50,6 +50,8 @@ export async function POST(req: Request) {
     // 2. If appointment was verbally confirmed, ensure it exists in appointments table
     if (bookingConfirmed) {
       const patientName = extractedData.patient_name || extractedData.name || 'Caller';
+      const ageVal = extractedData.age || extractedData.patient_age;
+      const parsedAge = ageVal ? parseInt(String(ageVal).replace(/\D/g, ''), 10) : null;
       const doctorName = extractedData.doctor || 'Dr. Rahul Sharma';
       const rawDate = extractedData.date || getTodayDateStr();
       const rawTime = extractedData.time || '10:00 AM';
@@ -72,6 +74,7 @@ export async function POST(req: Request) {
         await supabaseAdmin.from('appointments').insert({
           patient_name: patientName,
           phone: cleanPhone || '9999999999',
+          age: parsedAge,
           source: 'Bolna Voice AI',
           status: 'confirmed',
           slot_id: slotId,

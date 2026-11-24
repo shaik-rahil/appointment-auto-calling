@@ -14,11 +14,12 @@ const CLINIC_SLOTS = [
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { doctor, date, time, patient_name, phone, call_id } = body;
+    const { doctor, date, time, patient_name, phone, call_id, age } = body;
 
     const callerName = patient_name || body.name || 'Caller';
     const callerPhone = phone || body.patient_phone || '9999999999';
     const cleanPhone = String(callerPhone).replace(/\D/g, '').slice(-10);
+    const parsedAge = age ? parseInt(String(age).replace(/\D/g, ''), 10) : null;
 
     // Sanitize Date and Time from spoken voice input
     const cleanDate = parseSpokenDate(date || getTodayDateStr());
@@ -115,6 +116,7 @@ export async function POST(req: Request) {
       .insert({
         patient_name: callerName.trim(),
         phone: cleanPhone,
+        age: parsedAge,
         source: 'Bolna Voice AI',
         status: 'confirmed',
         doctor_id: docId,
