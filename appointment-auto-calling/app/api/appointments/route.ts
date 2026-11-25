@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { getTodayDateStr } from '@/lib/dateUtils';
+import { getTodayDateStr, formatKolkataDate, formatKolkataTime, getSlotIso } from '@/lib/dateUtils';
 
 export async function GET() {
   try {
@@ -15,6 +15,7 @@ export async function GET() {
         status,
         doctor_id,
         slot_id,
+        notes,
         created_at,
         doctors (
           id,
@@ -24,6 +25,7 @@ export async function GET() {
         doctor_slots (
           id,
           slot_start,
+          slot_end,
           is_booked
         )
       `)
@@ -37,18 +39,19 @@ export async function GET() {
     const mapped = (data || []).map((row: any) => {
       let date = getTodayDateStr();
       let time = '10:00 AM';
+
       if (row.doctor_slots?.slot_start) {
-        const d = new Date(row.doctor_slots.slot_start);
-        if (!isNaN(d.getTime())) {
-          date = d.toISOString().split('T')[0];
-          time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        date = formatKolkataDate(row.doctor_slots.slot_start);
+        time = formatKolkataTime(row.doctor_slots.slot_start);
+      } else if (row.notes && row.notes.includes('Booked for ')) {
+        const match = row.notes.match(/Booked for (\d{4}-\d{2}-\d{2}) at (.+)/);
+        if (match) {
+          date = match[1];
+          time = match[2];
         }
       } else if (row.created_at) {
-        const d = new Date(row.created_at);
-        if (!isNaN(d.getTime())) {
-          date = d.toISOString().split('T')[0];
-          time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-        }
+        date = formatKolkataDate(row.created_at);
+        time = formatKolkataTime(row.created_at);
       }
 
       return {
@@ -63,7 +66,7 @@ export async function GET() {
         date: date,
         time: time,
         reason: row.source ? `Booked via ${row.source}` : 'Clinical Consultation',
-        status: row.status ? (row.status.charAt(0).toUpperCase() + row.status.slice(1)) : 'Scheduled',
+        status: row.status ? (row.status.charAt(0).toUpperCase() + row.status.slice(1)) : 'Confirmed',
         createdAt: row.created_at,
       };
     });
@@ -81,6 +84,8 @@ export async function POST(req: Request) {
     const {
       patientName,
       patientPhone,
+      patientAge,
+      age,
       doctorId,
       doctorName,
       doctorSpecialization,
@@ -90,41 +95,46 @@ export async function POST(req: Request) {
       status,
     } = body;
 
-    if (!patientName || !patientPhone) {
-      return NextResponse.json({ error: 'Missing required appointment fields' }, { status: 400 });
+    if (!patientName) {
+      return NextResponse.json({ error: 'Missing required patient name' }, { status: 400 });
     }
 
-    const cleanPhone = String(patientPhone).replace(/\D/g, '').slice(-10);
+    const rawPhone = patientPhone || body.phone || body.user_phone || '9876543210';
+    const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10) || '9876543210';
+    const apptDate = date || getTodayDateStr();
+    const apptTime = time || '10:00 AM';
+    const parsedAge = age || patientAge ? parseInt(String(age || patientAge).replace(/\D/g, ''), 10) : null;
 
     // Create slot if date/time provided
     let slotId: string | null = null;
-    if (date && time) {
-      try {
-        const slotIso = new Date(`${date} ${time}`).toISOString();
-        const { data: slotData } = await supabaseAdmin
-          .from('doctor_slots')
-          .insert({
-            doctor_id: doctorId || null,
-            slot_start: slotIso,
-            is_booked: true,
-          })
-          .select('id')
-          .single();
-        if (slotData) {
-          slotId = slotData.id;
-        }
-      } catch (e) {
-        // Continue without slotId
+    try {
+      const { startIso, endIso } = getSlotIso(apptDate, apptTime);
+      const { data: slotData } = await supabaseAdmin
+        .from('doctor_slots')
+        .insert({
+          doctor_id: doctorId || null,
+          slot_start: startIso,
+          slot_end: endIso,
+          is_booked: true,
+        })
+        .select('id')
+        .single();
+      if (slotData) {
+        slotId = slotData.id;
       }
+    } catch (e) {
+      // Continue
     }
 
     const { data, error } = await supabaseAdmin.from('appointments').insert({
       patient_name: patientName.trim(),
       phone: cleanPhone,
+      age: parsedAge,
       doctor_id: doctorId || null,
       slot_id: slotId,
       source: reason || 'Voice AI',
       status: (status || 'confirmed').toLowerCase(),
+      notes: `Booked for ${apptDate} at ${apptTime}`,
     }).select().single();
 
     if (error) {
@@ -143,11 +153,13 @@ export async function POST(req: Request) {
         id: data.id,
         patientName: data.patient_name,
         patientPhone: data.phone,
+        patientAge: data.age,
+        age: data.age,
         doctorId: data.doctor_id || doctorId,
         doctorName: doctorName || 'Dr. Assigned',
         doctorSpecialization: doctorSpecialization || 'General Consultation',
-        date: date || getTodayDateStr(),
-        time: time || '10:00 AM',
+        date: apptDate,
+        time: apptTime,
         reason: reason || 'Booked via Voice AI',
         status: status || 'Confirmed',
         createdAt: data.created_at,

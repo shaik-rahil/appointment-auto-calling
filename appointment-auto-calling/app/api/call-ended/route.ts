@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { parseSpokenDate, parseSpokenTime, getTodayDateStr } from '@/lib/dateUtils';
+import { parseSpokenDate, parseSpokenTime, getTodayDateStr, getSlotIso } from '@/lib/dateUtils';
 
 export async function POST(req: Request) {
   try {
-    const payload = await req.json();
+    const payload = await req.json().catch(() => ({}));
     console.log('Call ended webhook received:', JSON.stringify(payload, null, 2));
 
     const callId = payload.call_id || payload.conversation_id || `call_${Date.now()}`;
@@ -67,25 +67,48 @@ export async function POST(req: Request) {
       const cleanDate = parseSpokenDate(rawDate);
       const cleanTime = parseSpokenTime(rawTime);
 
+      // Resolve doctor_id (NOT NULL in appointments table)
+      let docId: string | null = null;
+      try {
+        const { data: docData } = await supabaseAdmin
+          .from('doctors')
+          .select('id, name')
+          .ilike('name', `%${doctorName.replace(/^Dr\.\s*/i, '').trim()}%`)
+          .limit(1)
+          .maybeSingle();
+        if (docData) docId = docData.id;
+        else {
+          const { data: anyDoc } = await supabaseAdmin.from('doctors').select('id').limit(1).maybeSingle();
+          if (anyDoc) docId = anyDoc.id;
+        }
+      } catch (e) {}
+
       try {
         let slotId: string | null = null;
         try {
-          const slotIso = new Date(`${cleanDate} ${cleanTime}`).toISOString();
+          const { startIso, endIso } = getSlotIso(cleanDate, cleanTime);
           const { data: slotData } = await supabaseAdmin
             .from('doctor_slots')
-            .insert({ slot_start: slotIso, is_booked: true })
+            .insert({
+              doctor_id: docId,
+              slot_start: startIso,
+              slot_end: endIso,
+              is_booked: true,
+            })
             .select('id')
             .maybeSingle();
           if (slotData) slotId = slotData.id;
         } catch (e) {}
 
         await supabaseAdmin.from('appointments').insert({
-          patient_name: patientName,
-          phone: cleanPhone || '9999999999',
+          patient_name: patientName.trim(),
+          phone: cleanPhone,
           age: parsedAge,
+          doctor_id: docId,
           source: 'Bolna Voice AI',
           status: 'confirmed',
           slot_id: slotId,
+          notes: `Booked for ${cleanDate} at ${cleanTime}`,
         });
       } catch (apptErr) {
         console.error('Call ended appointment auto-capture error:', apptErr);

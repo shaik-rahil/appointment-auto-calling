@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { parseSpokenDate, parseSpokenTime, getTodayDateStr } from '@/lib/dateUtils';
+import { parseSpokenDate, parseSpokenTime, getTodayDateStr, getSlotIso } from '@/lib/dateUtils';
 
 const CLINIC_SLOTS = [
   '10:00 AM', '10:20 AM', '10:40 AM',
@@ -16,7 +16,9 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const { doctor, date, time, patient_name, phone, call_id, age } = body;
 
-    const callerName = patient_name || body.name || 'Caller';
+    const callerName = patient_name || body.name || body.patient || 'Patient';
+
+    // Automatic Phone Number Capture (from Bolna AI telephony metadata, user_phone, or caller ID)
     const rawPhone = 
       phone || 
       body.patient_phone || 
@@ -26,11 +28,13 @@ export async function POST(req: Request) {
       body.caller_id || 
       body.from || 
       body.to || 
+      body.recipient_phone ||
       req.headers.get('x-caller-phone') ||
       req.headers.get('x-phone') ||
+      req.headers.get('x-user-phone') ||
       '';
     const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10) || '9876543210';
-    const parsedAge = age ? parseInt(String(age).replace(/\D/g, ''), 10) : null;
+    const parsedAge = age ? parseInt(String(age).replace(/\D/g, ''), 10) : (body.patient_age ? parseInt(String(body.patient_age).replace(/\D/g, ''), 10) : null);
 
     // Sanitize Date and Time from spoken voice input
     const cleanDate = parseSpokenDate(date || getTodayDateStr());
@@ -51,7 +55,6 @@ export async function POST(req: Request) {
         docId = docData.id;
         doctorDisplayName = docData.name;
       } else {
-        // Fallback to first available doctor
         const { data: anyDoc } = await supabaseAdmin
           .from('doctors')
           .select('id, name')
@@ -67,20 +70,22 @@ export async function POST(req: Request) {
     }
 
     // 2. Sequential Call-Wise Slot Allocation (FIFO)
-    // If no valid time provided or already booked, automatically assign the next sequential slot
     try {
+      const startDayIso = new Date(`${cleanDate}T00:00:00+05:30`).toISOString();
+      const endDayIso = new Date(`${cleanDate}T23:59:59+05:30`).toISOString();
+
       const { data: bookedSlots } = await supabaseAdmin
         .from('doctor_slots')
         .select('slot_start')
-        .gte('slot_start', `${cleanDate}T00:00:00.000Z`)
-        .lte('slot_start', `${cleanDate}T23:59:59.999Z`);
+        .gte('slot_start', startDayIso)
+        .lte('slot_start', endDayIso);
 
       const bookedSet = new Set<string>();
       if (bookedSlots) {
         for (const s of bookedSlots) {
           if (s.slot_start) {
             const d = new Date(s.slot_start);
-            bookedSet.add(d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }));
+            bookedSet.add(d.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }));
           }
         }
       }
@@ -91,7 +96,6 @@ export async function POST(req: Request) {
         if (nextAvailable) {
           cleanTime = nextAvailable;
         } else {
-          // If all morning/afternoon taken, assign sequential based on count
           const nextIdx = bookedSet.size % CLINIC_SLOTS.length;
           cleanTime = CLINIC_SLOTS[nextIdx];
         }
@@ -100,15 +104,16 @@ export async function POST(req: Request) {
       if (!cleanTime) cleanTime = '10:00 AM';
     }
 
-    // 3. Create or reserve slot in doctor_slots
+    // 3. Create or reserve slot in doctor_slots (Requires slot_start AND slot_end)
     let slotId: string | null = null;
     try {
-      const slotIso = new Date(`${cleanDate} ${cleanTime}`).toISOString();
-      const { data: slotData } = await supabaseAdmin
+      const { startIso, endIso } = getSlotIso(cleanDate, cleanTime);
+      const { data: slotData, error: slotErr } = await supabaseAdmin
         .from('doctor_slots')
         .insert({
           doctor_id: docId,
-          slot_start: slotIso,
+          slot_start: startIso,
+          slot_end: endIso,
           is_booked: true,
         })
         .select('id')
@@ -116,9 +121,11 @@ export async function POST(req: Request) {
 
       if (slotData) {
         slotId = slotData.id;
+      } else if (slotErr) {
+        console.warn('Doctor slot insert error:', slotErr.message);
       }
     } catch (e) {
-      // Continue
+      console.warn('Doctor slot exception:', e);
     }
 
     // 4. Insert into appointments table
@@ -132,6 +139,7 @@ export async function POST(req: Request) {
         status: 'confirmed',
         doctor_id: docId,
         slot_id: slotId,
+        notes: `Booked for ${cleanDate} at ${cleanTime}`,
       })
       .select('id, created_at')
       .maybeSingle();
@@ -152,6 +160,7 @@ export async function POST(req: Request) {
       time: cleanTime,
       patient_name: callerName,
       phone: cleanPhone,
+      age: parsedAge,
       message: `Your appointment with ${doctorDisplayName} has been successfully confirmed for ${cleanDate} at ${cleanTime}.`,
     }, { status: 200 });
   } catch (err: any) {

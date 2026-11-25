@@ -21,6 +21,7 @@ import {
   Building2
 } from 'lucide-react';
 import { Doctor, Appointment, ActiveModule, DoctorStatus } from './types';
+import { getTodayDateStr } from '@/lib/dateUtils';
 
 interface DashboardOverviewProps {
   doctors: Doctor[];
@@ -205,10 +206,10 @@ export default function DashboardOverview({
           </div>
           <div className="mt-2">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-slate-900">14</span>
+              <span className="text-2xl font-black text-slate-900">{appointments.filter(a => a.date === getTodayDateStr()).length}</span>
               <span className="text-[10px] font-bold text-blue-600">Active</span>
             </div>
-            <p className="text-[10px] text-slate-400 mt-0.5">6 Pending completion</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">{appointments.length} Total Registered</p>
           </div>
         </div>
 
@@ -285,7 +286,7 @@ export default function DashboardOverview({
                     Today's Appointment Schedule
                   </h3>
                   <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                    6 items
+                    {scheduleItems.length} items
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">

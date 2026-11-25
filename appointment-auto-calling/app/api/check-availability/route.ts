@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { parseSpokenDate, getTodayDateStr } from '@/lib/dateUtils';
+import { parseSpokenDate, getTodayDateStr, formatKolkataTime } from '@/lib/dateUtils';
 
 // Standard clinic appointment time slots (20-minute consultation intervals)
 const CLINIC_SLOTS = [
@@ -40,44 +40,40 @@ export async function POST(req: Request) {
       // Continue with defaults
     }
 
-    // 2. Find which slots are ALREADY booked on this date
+    // 2. Find which slots are ALREADY booked on this date (using IST date boundaries)
     const bookedTimes = new Set<string>();
 
     try {
-      // Check doctor_slots for this date (ISO prefix matching: YYYY-MM-DD)
+      const startDayIso = new Date(`${date}T00:00:00+05:30`).toISOString();
+      const endDayIso = new Date(`${date}T23:59:59+05:30`).toISOString();
+
       const { data: bookedSlots } = await supabaseAdmin
         .from('doctor_slots')
         .select('slot_start, is_booked')
-        .gte('slot_start', `${date}T00:00:00.000Z`)
-        .lte('slot_start', `${date}T23:59:59.999Z`);
+        .gte('slot_start', startDayIso)
+        .lte('slot_start', endDayIso);
 
       if (bookedSlots && bookedSlots.length > 0) {
         for (const slot of bookedSlots) {
           if (slot.slot_start) {
-            const d = new Date(slot.slot_start);
-            if (!isNaN(d.getTime())) {
-              const formattedTime = d.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true,
-              });
-              bookedTimes.add(formattedTime);
-            }
+            const formattedTime = formatKolkataTime(slot.slot_start);
+            bookedTimes.add(formattedTime);
           }
         }
       }
 
-      // Also check appointments count for call-wise queue offset
+      // Also check appointments notes if slot wasn't linked
       const { data: appts } = await supabaseAdmin
         .from('appointments')
-        .select('id, slot_id, created_at')
-        .order('created_at', { ascending: true });
+        .select('id, notes, created_at')
+        .ilike('notes', `%${date}%`);
 
-      // If doctor_slots didn't catch it, use sequential offset based on total bookings
-      const apptCount = (appts || []).length;
-      if (bookedTimes.size === 0 && apptCount > 0) {
-        for (let i = 0; i < Math.min(apptCount, CLINIC_SLOTS.length - 1); i++) {
-          bookedTimes.add(CLINIC_SLOTS[i]);
+      if (appts) {
+        for (const a of appts) {
+          if (a.notes) {
+            const match = a.notes.match(/at\s+([0-9:AMP\s]+)/i);
+            if (match) bookedTimes.add(match[1].trim());
+          }
         }
       }
     } catch (e) {
@@ -85,7 +81,6 @@ export async function POST(req: Request) {
     }
 
     // 3. Sequential Call-Wise Slot Allocation (FIFO)
-    // Filter out already booked slots
     const availableSlots = CLINIC_SLOTS.filter(slot => !bookedTimes.has(slot));
 
     // Next sequential slot for this incoming call
@@ -99,7 +94,7 @@ export async function POST(req: Request) {
       specialization: specialization,
       department: specialization,
       date: date,
-      // The exact sequential next slot assigned for this call
+      // Sequential next slot assigned for this call
       next_available_slot: nextSlot,
       next_slot: nextSlot,
       free_slots: availableSlots.slice(0, 3).map(time => ({ time })),
